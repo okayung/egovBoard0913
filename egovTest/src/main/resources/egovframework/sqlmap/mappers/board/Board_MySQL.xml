@@ -1,0 +1,214 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="BoardDAO">
+
+	<select id="selectBoardList" parameterType="java.util.HashMap" resultType="java.util.HashMap">
+		SELECT  T.rnum,
+				T.boardIdx,
+		        T.boardTitle,
+		        T.createId,
+		        T.createDate,
+		        T.updateId,
+		        T.updateDate
+		FROM (select    FORMAT(@rownum:=@rownum+1, 0) AS rnum,
+						board_idx AS boardIdx,
+						board_title As boardTitle,
+						create_id AS createId,
+						DATE_FORMAT(create_date, '%Y-%m-%d %H:%i:%s') AS createDate,
+						update_id AS updateId,
+						DATE_FORMAT(update_date, '%Y-%m-%d %H:%i:%s') AS updateDate
+			from tb_board, (SELECT @rownum:=0 FROM dual) R
+			WHERE 1=1
+			AND use_yn = 'Y'
+			<if test="searchKeyword != '' and searchKeyword != null and searchKeyword != 'undefined'">
+				<if test="searchCondition == 'id'">
+					AND create_id like concat('%',#{searchKeyword},'%')
+				</if>
+				<if test="searchCondition == 'title'">
+					AND board_title like concat('%',#{searchKeyword},'%')
+				</if>
+			</if>
+			ORDER BY create_date) T
+		ORDER BY CAST(replace(T.rnum, ',', '') AS UNSIGNED) desc
+		LIMIT #{recordCountPerPage} offset #{firstIndex}
+	</select>
+	
+	<select id="selectBoardListCnt" parameterType="java.util.HashMap" resultType="int"> <!-- 게시판 목록 카운트 -->
+		select count(board_idx)
+		from tb_board
+		WHERE 1=1
+		AND use_yn = 'Y'
+		<if test="searchKeyword != '' and searchKeyword != null and searchKeyword != 'undefined'">
+			<if test="searchCondition == 'id'">
+				AND create_id like concat('%',#{searchKeyword}, '%')
+			</if>
+			<if test="searchCondition == 'title'">
+				AND board_title like concat('%',#{searchKeyword}, '%')
+			</if>
+		</if>
+	</select>
+	<!-- 변경 -->
+	<insert id="insertBoard" parameterType="java.util.HashMap">   <!-- 게시판 insert -->
+		insert into tb_board(
+			board_title,
+		    board_content,
+		    file_group_idx,
+		    create_id,
+		    create_date,
+		    update_id,
+		    update_date,
+		    use_yn
+		) values(
+			#{boardTitle},
+		    #{boardContent},
+		    (SELECT ifnull(MAX(A.file_group_idx), 0)+1 FROM tb_board A),
+		    #{memberId},
+		    CURRENT_TIMESTAMP(),
+		    #{memberId},
+		    CURRENT_TIMESTAMP(),
+		    'Y'
+		)
+	</insert>
+	
+	<update id="updateBoard" parameterType="java.util.HashMap"> <!-- 게시판 목록 수정 -->
+		UPDATE tb_board
+		SET board_title = #{boardTitle},
+			board_content = #{boardContent},
+			update_id = #{memberId},
+			update_date = CURRENT_TIMESTAMP()
+		WHERE board_idx = #{boardIdx}
+	</update>
+	
+	<select id="selectBoardDetail" parameterType="int" resultType="java.util.HashMap"> <!-- 게시판 목록 내용 상세보기 -->
+		select      
+					board_idx AS boardIdx,
+					board_title As boardTitle,
+					board_content AS boardContent,
+					file_group_idx AS fileGroupIdx,
+					create_id AS createId,
+					DATE_FORMAT(create_date, '%Y-%m-%d %H:%i:%s') AS createDate,
+					update_id AS updateId,
+					DATE_FORMAT(update_date, '%Y-%m-%d %H:%i:%s') AS updateDate
+		from tb_board
+		WHERE board_idx = #{boardIdx}
+	</select>
+	
+	<update id="deleteBoard" parameterType="java.util.HashMap"> <!-- 게시판 목록 삭제 -->
+		UPDATE tb_board
+		SET use_yn ='N',
+			update_id = #{memberId},
+			update_date = CURRENT_TIMESTAMP()
+		WHERE board_idx =#{boardIdx}
+		
+	</update>
+	
+	<select id="selectBoardReply" parameterType="java.util.HashMap" resultType="java.util.HashMap"> <!-- 대댓글 쿼리 -->
+		with recursive cte as(
+			SELECT 1 AS reply_level, reply_idx, reply_content, create_id, create_date, convert(reply_idx, char) as path, parent_reply_idx
+		    FROM tb_reply
+		    WHERE parent_reply_idx is null
+		    AND board_idx = #{boardIdx}
+		    AND use_yn = 'Y'
+		    UNION ALL
+		    SELECT 1+cte.reply_level, r.reply_idx, r.reply_content, r.create_id, r.create_date, 
+		    		co
+		    		ncat(path, '-', r.reply_idx) as path, r.parent_reply_idx
+		    FROM tb_reply r
+		    inner join cte on r.parent_reply_idx = cte.reply_idx
+		    WHERE r.board_idx = #{boardIdx}
+		    AND r.use_yn = 'Y'
+		)
+		SELECT  reply_idx AS replyIdx,
+				reply_content AS replyContent,
+		        create_id AS createId, 
+		        DATE_FORMAT(create_date, '%Y-%m-%d %H:%i:%s') AS createDate,
+		        reply_level-1 AS replyLevel,
+		        path,
+		        parent_reply_idx AS parentReplyIdx
+		FROM cte
+		ORDER BY convert(substring_index(path, '-',1), UNSIGNED) desc, path
+	</select>
+	
+	<insert id="insertReply" parameterType="java.util.HashMap">  <!-- 게시판 댓글 insert -->
+		INSERT INTO tb_reply(
+			board_idx,
+		    parent_reply_idx,
+		    reply_content,
+		    create_id,
+		    create_date,
+		    update_id,
+		    update_date,
+		    reply_level,
+		    use_yn
+		) VALUES (
+			#{boardIdx},
+		    #{replyIdx},
+		    #{replyContent},
+		    #{memberId},
+		    current_timestamp(),
+		    #{memberId},
+		    current_timestamp(),
+		    1,
+		    'Y'
+		)
+	</insert>
+	
+	<select id="getFileGroupMaxIdx" resultType="int">
+		SELECT ifnull(MAX(file_group_idx), 0) FROM tb_board
+	</select>
+	
+	<select id="getFileGroupIdx" parameterType="java.util.HashMap" resultType="int">
+		SELECT file_group_idx
+		FROM tb_board
+		WHERE board_idx = #{boardIdx}
+	</select>
+	
+	<insert id="insertFileAttr" parameterType="java.util.HashMap">
+		INSERT INTO tb_file_attr(
+			file_group_idx,
+			file_original_name,
+			save_file_name,
+			save_file_path,
+			file_size,
+			file_ext,
+			create_id,
+			create_date,
+			update_id,
+			update_date		
+		) VALUES(
+			#{fileGroupIdx},
+			#{originalFileName},
+			#{saveFileName},
+			#{saveFilePath},
+			#{fileSize},
+			#{fileExt},
+			#{memberId},
+			CURRENT_TIMESTAMP(),
+			#{memberId},
+			CURRENT_TIMESTAMP()
+		)
+	</insert>
+	
+	<select id="selectFileList" parameterType="int" resultType="java.util.HashMap">
+		SELECT  file_idx AS fileIdx,
+				file_group_idx AS fileGroupIdx,
+				file_original_name AS fileOriginalName,
+				save_file_name AS saveFileName,
+				save_file_path AS saveFilePath,
+				file_size AS fileSize,
+				file_ext AS fileExt,
+				create_id AS createId,
+				DATE_FORMAT(create_date, '%Y-%m-%d %H:%i:%s') AS createDate,
+				update_id AS updateId,
+				DATE_FORMAT(update_date, '%Y-%m-%d %H:%i:%s') AS updateDate	
+		FROM tb_file_attr
+		WHERE file_group_idx = #{fileGroupIdx}
+		AND use_yn = 'Y'
+	</select>
+	
+	<update id="deleteFileAttr" parameterType="java.util.HashMap">
+		UPDATE tb_file_attr
+		SET use_yn = 'N'
+		WHERE file_idx in (${deleteFiles})
+	</update>
+</mapper>
